@@ -359,22 +359,6 @@ describe("Entities Schemas", function()
           end
         end)
 
-        it("rejects reserved characters from RFC 3986", function()
-          local invalids = { "/[a-z]{3}" }
-
-          for _, v in ipairs(invalids) do
-            local t = {
-              name = "mockbin",
-              upstream_url = "http://mockbin.com",
-              uris = { v },
-            }
-
-            local ok, errors = validate_entity(t, api_schema)
-            assert.is_false(ok)
-            assert.matches("must only contain alphanumeric and '., -, _, ~, /, %' characters", errors.uris, nil, true)
-          end
-        end)
-
         it("rejects bad %-encoded characters", function()
           local invalids = {
             "/some%2words",
@@ -429,6 +413,22 @@ describe("Entities Schemas", function()
             local ok, errors = validate_entity(t, api_schema)
             assert.is_false(ok)
             assert.matches("invalid", errors.uris, nil, true)
+          end
+        end)
+
+        it("rejects regex URIs that are invalid regexes", function()
+          local invalids = { [[/users/(foo/profile]] }
+
+          for _, v in ipairs(invalids) do
+            local t = {
+              name = "mockbin",
+              upstream_url = "http://mockbin.com",
+              uris = { v },
+            }
+
+            local ok, errors = validate_entity(t, api_schema)
+            assert.is_false(ok)
+            assert.matches("invalid regex", errors.uris, nil, true)
           end
         end)
       end)
