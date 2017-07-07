@@ -164,14 +164,24 @@ local function marshall_api(api)
           -- regex URI
           local strip_regex = uri .. [[/?(?P<stripped_uri>.*)]]
 
+          local from, _, err = re_find(uri, [[\(.*\)]], "jo")
+          if err then
+            log(ERR, "could not determine if regex URI has capture groups: ",
+                     err)
+          end
+
+          local has_captures = from ~= nil
+
           api_t.uris[uri] = {
+            has_captures  = has_captures,
             strip_regex   = strip_regex,
           }
 
           insert(api_t.uris, {
-            value       = uri,
-            regex       = uri,
-            strip_regex = strip_regex,
+            value        = uri,
+            regex        = uri,
+            has_captures = has_captures,
+            strip_regex  = strip_regex,
           })
         end
       end
@@ -309,31 +319,77 @@ do
     end,
 
     [MATCH_RULES.URI] = function(api_t, ctx)
-      local uri = ctx.uri_prefix or ctx.uri_regex or ctx.uri
+      do
+        local uri     = ctx.uri_prefix or ctx.uri_regex or ctx.uri
+        local regex_t = api_t.uris[uri]
 
-      if api_t.uris[uri] then
-        if api_t.strip_uri then
-          ctx.strip_uri_regex = api_t.uris[uri].strip_regex
+        if regex_t then
+          if api_t.strip_uri or regex_t.has_captures then
+            local m, err = re_match(ctx.uri, regex_t.strip_regex, "ajo")
+            if err then
+              log(ERR, "could not evaluate URI prefix/regex: ", err)
+              return
+            end
+
+            if m then
+              if m.stripped_uri then
+                ctx.stripped_uri = "/" .. m.stripped_uri
+                -- remove the stripped_uri group
+                m[#m]            = nil
+                m.stripped_uri   = nil
+              end
+
+              if regex_t.has_captures then
+                m[0] = nil
+                ctx.uri_captures = m
+              end
+
+              return true
+            end
+          end
+
+          -- plain or prefix match from the index without strip_uri
+          return true
         end
-
-        return true
       end
 
       for i = 1, #api_t.uris do
         local regex_t = api_t.uris[i]
 
-        local from, _, err = re_find(ctx.uri, regex_t.regex, "ajo")
-        if err then
-          log(ERR, "could not evaluate URI prefix/regex: ", err)
-          return
-        end
-
-        if from then
-          if api_t.strip_uri then
-            ctx.strip_uri_regex = regex_t.strip_regex
+        if api_t.strip_uri or regex_t.has_captures then
+          local m, err = re_match(ctx.uri, regex_t.strip_regex, "ajo")
+          if err then
+            log(ERR, "could not evaluate URI prefix/regex: ", err)
+            return
           end
 
-          return true
+          if m then
+            if m.stripped_uri then
+              ctx.stripped_uri = "/" .. m.stripped_uri
+              -- remove the stripped_uri group
+              m[#m]            = nil
+              m.stripped_uri   = nil
+            end
+
+            if regex_t.has_captures then
+              m[0] = nil
+              ctx.uri_captures = m
+            end
+
+            return true
+          end
+
+        else
+          -- prefix match without strip_uri
+          local from, _, err = re_find(ctx.uri, regex_t.regex, "ajo")
+          if err then
+            log(ERR, "could not evaluate URI prefix/regex: ", err)
+            return
+          end
+
+          if from then
+            return true
+          end
         end
       end
     end,
@@ -659,7 +715,8 @@ function _M.new(apis)
             cache:set(cache_key, {
               api_t = matched_api,
               ctx   = {
-                strip_uri_regex = ctx.strip_uri_regex,
+                stripped_uri = ctx.stripped_uri,
+                uri_captures = ctx.uri_captures,
               }
             })
 
@@ -709,14 +766,8 @@ function _M.new(apis)
 
     local uri_root = request_uri == "/"
 
-    if not uri_root and ctx.strip_uri_regex then
-      local m, err = re_match(uri, ctx.strip_uri_regex, "ajo")
-      if not m then
-        log(ERR, "could not strip URI: ", err)
-        return
-      end
-
-      uri = "/" .. m.stripped_uri
+    if not uri_root and api_t.strip_uri and ctx.stripped_uri then
+      uri = ctx.stripped_uri
     end
 
 
@@ -757,7 +808,7 @@ function _M.new(apis)
       ngx.header["Kong-Api-Name"] = api_t.api.name
     end
 
-    return api_t.api, api_t.upstream, host_header, uri
+    return api_t.api, api_t.upstream, host_header, uri, ctx.uri_captures
   end
 
 
