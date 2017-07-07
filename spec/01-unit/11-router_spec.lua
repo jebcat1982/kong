@@ -268,6 +268,46 @@ describe("Router", function()
       end)
     end)
 
+    describe("uri as a regex", function()
+      it("matches with [uri regex]", function()
+        local use_case = {
+          {
+            name = "api-1",
+            uris = { [[/users/\d+/profile]] },
+          },
+        }
+
+        local router = assert(Router.new(use_case))
+
+        local api_t = router.select("GET", "/users/123/profile")
+        assert.truthy(api_t)
+        assert.same(use_case[1], api_t.api)
+      end)
+
+      it("matches the right API when several ones have a [uri regex]", function()
+        local use_case = {
+          {
+            name = "api-1",
+            uris = { [[/api/persons/\d{3}]] },
+          },
+          {
+            name = "api-2",
+            uris = { [[/api/persons/\d{3}/following]] },
+          },
+          {
+            name = "api-3",
+            uris = { [[/api/persons/\d{3}/[a-z]+]] },
+          },
+        }
+
+        local router = assert(Router.new(use_case))
+
+        local api_t = router.select("GET", "/api/persons/456")
+        assert.truthy(api_t)
+        assert.same(use_case[1], api_t.api)
+      end)
+    end)
+
     describe("wildcard domains", function()
       local use_case = {
         {
@@ -430,6 +470,30 @@ describe("Router", function()
         assert.same(use_case[1], api_t.api)
 
         api_t = router.select("POST", "/", "host.com")
+        assert.truthy(api_t)
+        assert.same(use_case[2], api_t.api)
+      end)
+
+      it("half [uri regex] amd [method] match does not supersede another API", function()
+        local use_case = {
+          {
+            name = "api-1",
+            methods = { "GET" },
+            uris = { [[/users/\d+/profile]] },
+          },
+          {
+            name = "api-2",
+            methods = { "POST" },
+            uris = { [[/users/\d*/profile]] },
+          }
+        }
+
+        local router = assert(Router.new(use_case))
+        local api_t = router.select("GET", "/users/123/profile")
+        assert.truthy(api_t)
+        assert.same(use_case[1], api_t.api)
+
+        api_t = router.select("POST", "/users/123/profile")
         assert.truthy(api_t)
         assert.same(use_case[2], api_t.api)
       end)
@@ -1075,6 +1139,38 @@ describe("Router", function()
         local api, _, _, uri = router.exec(_ngx)
         assert.same(use_case_apis[1], api)
         assert.equal("/", uri)
+      end)
+
+      it("strips a [uri regex]", function()
+        local use_case = {
+          {
+            name      = "api-1",
+            strip_uri = true,
+            uris      = { [[/users/\d+/profile]] },
+          },
+        }
+
+        local router = assert(Router.new(use_case))
+
+        local _ngx = mock_ngx("GET", "/users/123/profile/hello/world", {})
+        local _, _, _, uri = router.exec(_ngx)
+        assert.equal("/hello/world", uri)
+      end)
+
+      it("strips a [uri regex] with a capture group", function()
+        local use_case = {
+          {
+            name      = "api-1",
+            strip_uri = true,
+            uris      = { [[/users/(\d+)/profile]] },
+          },
+        }
+
+        local router = assert(Router.new(use_case))
+
+        local _ngx = mock_ngx("GET", "/users/123/profile/hello/world", {})
+        local _, _, _, uri = router.exec(_ngx)
+        assert.equal("/hello/world", uri)
       end)
     end)
 
